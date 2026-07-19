@@ -1,103 +1,106 @@
 # LangGraph Product Catalog Backend
 
-This project is a FastAPI backend for a product-catalog chatbot built with LangGraph, LangChain, and an Ollama-compatible chat model. The chatbot accepts natural-language product requests, converts them into a safe read-only Oracle SQL query, runs that query against the catalog, and returns a conversational response.
+This backend provides the API and LangGraph workflow for the product catalog chatbot. It accepts user requests, turns them into safe read-only catalog queries through the model layer, executes those queries against Oracle, and returns the full conversation history.
 
 ## What This Backend Does
 
-- Exposes a `/chat` API endpoint for catalog questions
-- Uses a LangGraph workflow with tool-calling
-- Generates read-only Oracle `SELECT` queries from user intent
-- Queries the `WEBUSG.SCRAPED_PRODUCTS` catalog table
-- Keeps short-term conversation memory by `thread_id` during the current server process
+- Exposes a `POST /chat` endpoint for catalog questions
+- Uses LangGraph with tool-calling and in-memory thread checkpointing
+- Generates one parameterized Oracle `SELECT` query from user intent
+- Queries `WEBUSG.SCRAPED_PRODUCTS`
+- Returns the updated message history for the frontend to render
 
-## Project Structure
+## Main Files
 
 ```text
 backend/
 |-- app.py
+|-- main.py
 |-- pyproject.toml
-|-- services/
-|   |-- chatBot.py
-|   |-- llm.py
-|   |-- quer_generation.py
-|   |-- run_query.py
-|   `-- tools.py
-`-- .env
+|-- uv.lock
+`-- services/
+    |-- chatBot.py
+    |-- llm.py
+    |-- quer_generation.py
+    |-- run_query.py
+    |-- state.py
+    `-- tools.py
 ```
 
-## Main Files
+### File responsibilities
 
 - `app.py`
-  - Starts the FastAPI app
-  - Exposes the `/chat` endpoint
+  Starts FastAPI and exposes the API routes.
 - `services/chatBot.py`
-  - Builds the LangGraph workflow
-  - Adds tool-calling and in-memory conversation state
+  Builds the LangGraph workflow, binds tools, and manages in-memory thread state.
 - `services/tools.py`
-  - Defines the catalog search tool used by the graph
+  Defines the catalog tool the graph can call.
 - `services/quer_generation.py`
-  - Turns a user requirement into a safe Oracle `SELECT` query plus bind params
+  Prompts the model to generate one Oracle `SELECT` query plus bind parameters.
 - `services/run_query.py`
-  - Executes the generated SQL against Oracle
+  Initializes the Oracle client, connects to Oracle, and executes the generated query.
 - `services/llm.py`
-  - Creates the Ollama-compatible chat model client from environment variables
+  Creates the Ollama-compatible chat client from environment variables.
+- `main.py`
+  Simple local placeholder entry point and not the main API server.
 
 ## Requirements
 
 - Python 3.12+
-- A working virtual environment
-- An Ollama-compatible model endpoint
-- Oracle database access for the catalog query layer
+- Oracle client libraries installed locally
+- Oracle database credentials
+- An Ollama-compatible chat endpoint
 
 ## Environment Variables
 
-Create a `.env` file in the backend folder with the values used by `services/llm.py` and your database layer.
-
-LLM variables currently used by the code:
+Create `backend/.env` with these values:
 
 ```env
 OLLAMA_MODEL=gpt-oss:120b
 OLLAMA_URL=https://your-ollama-compatible-endpoint
 OLLAMA_API_KEY=your_api_key
+DB_USERNAME=your_username
+DB_PASSWORD=your_password
+DB_HOST_PRIMARY=your_primary_host
+DB_HOST_SECONDARY=your_secondary_host
+DB_PORT=1521
+DB_SERVICE=your_service_name
+ORACLE_LIB_DIR=C:\path\to\oracle\instantclient
 ```
 
-If your Oracle query runner needs additional variables, add them to `.env` as required by `services/run_query.py`.
+Notes:
+
+- `OLLAMA_API_KEY` is required by the current code path.
+- `DB_HOST_SECONDARY` is optional, but supported for failover.
+- `ORACLE_LIB_DIR` is required by the current Oracle client initialization logic.
 
 ## Install Dependencies
 
-If you are using the existing virtual environment:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-If dependencies are not installed yet:
+From the `backend` directory:
 
 ```powershell
 pip install -e .
 ```
 
-## Run the Server
+## Run The API Server
 
-Use the virtualenv Python explicitly to avoid the `uvicorn` path issue:
+From the `backend` directory:
+
+```powershell
+python -m uvicorn app:app --reload
+```
+
+If `uvicorn` resolves to the wrong interpreter on Windows, use the virtualenv Python explicitly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app:app --reload
 ```
 
-Do not rely on plain:
-
-```powershell
-uvicorn app:app --reload
-```
-
-On this machine, `uvicorn` may resolve to a different global executable instead of the one inside `.venv`.
-
-## API Endpoints
+## API Routes
 
 ### `GET /`
 
-Simple health-style response:
+Returns:
 
 ```json
 {
@@ -105,9 +108,20 @@ Simple health-style response:
 }
 ```
 
-### `POST /chat`
+### `GET /items/{item_id}`
 
-Send a user message and a `thread_id`.
+Sample route currently present in `app.py`:
+
+```json
+{
+  "item_id": 1,
+  "q": "example"
+}
+```
+
+This route looks like a basic FastAPI demo/helper route rather than part of the chatbot contract.
+
+### `POST /chat`
 
 Request body:
 
@@ -120,86 +134,79 @@ Request body:
 
 Important:
 
-- The field name must be `thread_id`
-- `thread_d` is incorrect and will fail validation
+- The request field must be `thread_id`
+- The backend uses `embed=True`, so the JSON body must include both top-level keys
 
-Example response shape:
+Response behavior:
 
-```json
-{
-  "history": {
-    "messages": []
-  }
-}
-```
+- The endpoint returns an object with a `history` field
+- `history.messages` contains the conversation state returned by LangGraph
+- The frontend reads and normalizes those messages before displaying them
 
-## How Memory Works
+## Memory Model
 
 Conversation memory is currently handled with LangGraph `MemorySaver`.
 
 Behavior:
 
-- Memory is grouped by `thread_id`
-- Messages with the same `thread_id` share conversation context
-- Messages with different `thread_id` values are treated as separate conversations
+- messages are grouped by `thread_id`
+- using the same `thread_id` continues the same conversation
+- using a different `thread_id` starts a separate conversation
 
 Current limitation:
 
-- `MemorySaver` is in-memory only
-- Memory is lost when the server restarts
-- Memory is also lost when code reloads happen under `--reload`
-
-If persistent memory is needed, replace `MemorySaver` with a persistent checkpointer such as SQLite or Postgres.
+- memory is in-process only
+- memory is lost when the server restarts
+- memory is also lost on code reload while running with `--reload`
 
 ## High-Level Flow
 
 1. The client sends `message` and `thread_id` to `/chat`.
 2. `app.py` calls `runGraph(...)`.
-3. `services/chatBot.py` invokes the LangGraph workflow.
-4. The LLM decides when to call the catalog tool.
-5. `services/tools.py` calls the query generator.
-6. `services/quer_generation.py` creates a safe Oracle `SELECT` query and bind params.
-7. The query is executed and returned to the graph.
-8. The chatbot formats the result into a user-facing response.
+3. `services/chatBot.py` invokes the graph with the configured thread id.
+4. The graph can call `search_product_catalog(...)`.
+5. `services/quer_generation.py` asks the model for an Oracle `SELECT` query and bind parameters.
+6. `services/run_query.py` executes the query and returns structured rows.
+7. The assistant formats the tool result into a final answer.
 
-## Notes
+## Current Limitations
 
-- The chatbot is designed for product-catalog questions
-- The SQL generator is intended to produce read-only queries only
-- The current README documents the backend only
-- The file `services/quer_generation.py` is named `quer_generation.py` in the project as it exists today
+- There is no extra SQL validation layer before execution beyond the prompt constraints
+- Oracle access and local Oracle client libraries are mandatory for real queries
+- Logging is currently done with `print(...)`
+- `services/state.py` is present but currently empty
+- There are no automated tests yet
 
-## Common Issues
+## Troubleshooting
 
-### 1. `Failed to canonicalize script path`
+### `OLLAMA_API_KEY` missing
 
 Cause:
-- The wrong `uvicorn` executable is being used
+
+- `services/llm.py` raises an error if `OLLAMA_API_KEY` is not present
 
 Fix:
 
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn app:app --reload
-```
+- add `OLLAMA_API_KEY` to `backend/.env`
 
-### 2. Chat memory does not seem to work
+### Oracle client initialization fails
 
-Check the following:
+Check:
 
-- You are sending the same `thread_id` across follow-up messages
-- The server process has not restarted
-- You are not assuming `MemorySaver` is persistent storage
+- `ORACLE_LIB_DIR` points to a valid Oracle Instant Client folder
+- the folder is accessible on this machine
 
-### 3. FastAPI says `thread_id` is missing
+### Could not connect to Oracle database
 
-Cause:
-- The request body uses the wrong field name
+Check:
 
-Correct request:
+- `DB_USERNAME`
+- `DB_PASSWORD`
+- `DB_HOST_PRIMARY`
+- `DB_SERVICE`
+- `DB_PORT`
+- network reachability to the configured Oracle host
 
-```json
-{
-  "message": "what will be 10 + 2929",
-  "thread_id": "23821y382"
-}
-```
+### Chat memory does not persist
+
+This is expected with the current implementation because `MemorySaver` is in-memory only.

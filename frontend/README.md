@@ -1,15 +1,15 @@
 # Product Catalog Chatbot Frontend
 
-Frontend for a product catalog chatbot built with React, Vite, and Redux Toolkit. The app connects to a FastAPI backend, sends user messages with a persistent `thread_id`, and renders the updated chat history returned by the API.
+This frontend is a React and Vite chat client for the product catalog assistant. It sends messages to the FastAPI backend, keeps a persistent browser-side `thread_id`, and renders assistant replies as Markdown.
 
-## Overview
+## What The Frontend Does
 
-This frontend is designed for a shopping or catalog assistant use case where users can:
-
-- ask for products by brand, department, style, fit, or price
-- continue a multi-turn conversation using the same backend thread
-- view markdown-formatted bot replies including headings, lists, tables, and links
-- browse long chat histories in a scrollable message area with a fixed composer
+- Sends user messages to the backend chat API
+- Persists a `thread_id` in `localStorage`
+- Renders conversation history returned by the backend
+- Displays assistant responses with Markdown and GitHub-flavored tables
+- Shows loading and error states in the chat UI
+- Auto-scrolls to the latest message
 
 ## Tech Stack
 
@@ -18,77 +18,77 @@ This frontend is designed for a shopping or catalog assistant use case where use
 - Redux Toolkit
 - React Redux
 - React Markdown
-- Remark GFM for GitHub-flavored markdown tables and lists
-
-## Features
-
-- Chat UI with fixed textarea and send button at the bottom
-- Scrollable messages area
-- Redux-based chat state management
-- Persistent `thread_id` stored in browser `localStorage`
-- Markdown rendering for assistant responses
-- GitHub-flavored markdown table support
-- Vite dev proxy for local FastAPI integration
-- Filtering and normalization of backend history messages before display
-- Merge of split sequential assistant chunks into a single bubble for cleaner output
+- `remark-gfm`
 
 ## Project Structure
 
 ```text
 frontend/
-+-- src/
-¦   +-- api/
-¦   ¦   +-- chatApi.js
-¦   +-- app/
-¦   ¦   +-- store.js
-¦   +-- components/
-¦   ¦   +-- ChatHeader.jsx
-¦   ¦   +-- ChatInput.jsx
-¦   ¦   +-- ChatMessages.jsx
-¦   ¦   +-- MessageBubble.jsx
-¦   +-- features/
-¦   ¦   +-- chat/
-¦   ¦       +-- chatSlice.js
-¦   +-- App.jsx
-¦   +-- main.jsx
-¦   +-- styles.css
-+-- .env.example
-+-- index.html
-+-- package.json
-+-- README.md
-+-- vite.config.js
+|-- index.html
+|-- package.json
+|-- README.md
+|-- vite.config.js
+`-- src/
+    |-- api/
+    |   `-- chatApi.js
+    |-- app/
+    |   `-- store.js
+    |-- components/
+    |   |-- ChatHeader.jsx
+    |   |-- ChatInput.jsx
+    |   |-- ChatMessages.jsx
+    |   |-- MessageBubble.jsx
+    |   `-- ProductTips.jsx
+    |-- features/
+    |   `-- chat/
+    |       `-- chatSlice.js
+    |-- App.jsx
+    |-- main.jsx
+    `-- styles.css
 ```
+
+## UI Behavior
+
+- The chat header shows connection state and total rendered message count
+- User messages appear on the right
+- Assistant messages appear on the left
+- Assistant content is rendered as Markdown
+- A typing indicator is shown while a request is in flight
+- Errors are shown inline in the message area
+- The message list auto-scrolls as messages change
 
 ## How It Works
 
-1. The user types a message in the chat box.
-2. Redux dispatches the `sendMessage` async thunk.
-3. The frontend sends a `POST` request to the FastAPI chat endpoint.
-4. A persistent `thread_id` is included with each request.
-5. The backend returns conversation history.
-6. The frontend normalizes the history and renders it as chat bubbles.
+1. The user types a message into the textarea.
+2. `sendMessage` in `src/features/chat/chatSlice.js` dispatches an async request.
+3. `src/api/chatApi.js` sends a `POST` request to the backend.
+4. The stored `thread_id` is included in every request.
+5. The backend returns `history.messages`.
+6. The frontend filters, normalizes, and renders only visible chat messages.
 
 ## API Integration
 
-### Development request path
+### Default development path
 
-During local development, the browser calls:
+The frontend sends requests to:
 
 ```text
 /api/chat
 ```
 
-Vite proxies that request to the FastAPI backend configured in `vite.config.js`.
+### Vite proxy target
 
-### FastAPI target used in development
+During local development, Vite proxies those requests to:
 
 ```text
 http://127.0.0.1:8000/chat
 ```
 
+This is configured in `vite.config.js` by rewriting `/api/*` to the backend root.
+
 ## Request Payload
 
-The frontend sends this payload to the backend:
+The frontend sends this JSON body:
 
 ```json
 {
@@ -97,78 +97,41 @@ The frontend sends this payload to the backend:
 }
 ```
 
-### Notes
+Notes:
 
-- `message` is the user input from the textarea.
-- `thread_id` is reused across messages so the backend can keep context.
-- If no thread id exists yet, the frontend creates one and stores it in `localStorage`.
+- `message` comes from the textarea input
+- `thread_id` is reused across turns so the backend can continue the same conversation
+- if no thread id exists yet, the frontend creates one and stores it in `localStorage`
 
-## Expected Response Shape
+## Expected Backend Response
 
-The frontend currently expects the backend to return data in this shape:
+The frontend expects the backend to return a JSON object with `history.messages`.
 
-```json
-{
-  "history": {
-    "messages": [
-      {
-        "content": "what will be 10 + 2929",
-        "type": "human",
-        "id": "e59a743a-8819-4810-928a-68a194c45520"
-      },
-      {
-        "content": "10 + 2929 = 2939.",
-        "type": "ai",
-        "id": "lc_run--019f797f-2956-7210-b6c2-80e8f9c31d72-0",
-        "response_metadata": {
-          "created_at": "2026-07-19T08:30:07.27821939Z"
-        }
-      }
-    ]
-  }
-}
-```
+Typical message fields used by the UI are:
+
+- `type`
+- `content`
+- `id`
+- `response_metadata.created_at`
 
 ## Response Normalization Rules
 
-The frontend transforms backend messages before rendering:
+The frontend currently applies these rules before rendering:
 
-- `type: "human"` becomes a user bubble
-- `type: "ai"` becomes an assistant bubble
-- only `human` and `ai` messages are shown
+- `human` messages become user bubbles
+- `ai` messages become assistant bubbles
+- only `human` and `ai` messages are displayed
 - non-chat system or tool messages are filtered out
-- back-to-back assistant chunks are merged into one bubble
-- `response_metadata.created_at` is used as the timestamp when available
+- sequential assistant messages are merged into one bubble
+- timestamps prefer `response_metadata.created_at` when available
 
-## Markdown Rendering
-
-Assistant messages support markdown rendering.
-
-Supported content includes:
-
-- headings
-- bold and emphasis
-- ordered and unordered lists
-- tables
-- code blocks
-- inline code
-- links
-- blockquotes
-
-This is useful for catalog summaries like:
-
-- product count tables
-- formatted comparisons
-- structured search results
-- recommendation lists
-
-## Local Development Setup
+## Local Development
 
 ### Prerequisites
 
 - Node.js
 - npm
-- FastAPI backend running locally on port `8000`
+- backend running on `http://127.0.0.1:8000`
 
 ### Install
 
@@ -176,30 +139,13 @@ This is useful for catalog summaries like:
 npm install
 ```
 
-### Environment file
-
-Create a `.env` file from `.env.example` if needed.
-
-Example:
-
-```env
-VITE_API_BASE_URL=
-VITE_CHAT_ENDPOINT=/api/chat
-VITE_DEFAULT_THREAD_ID=
-```
-
-### Start the development server
+### Start the dev server
 
 ```powershell
 npm run dev
 ```
 
-If PowerShell cannot find `npm`, use:
-
-```powershell
-$env:Path = 'C:\Program Files\nodejs;' + $env:Path
-npm run dev
-```
+If PowerShell cannot find `npm`, make sure Node.js is installed and available in your `PATH`.
 
 ### Build for production
 
@@ -207,113 +153,67 @@ npm run dev
 npm run build
 ```
 
-### Preview production build
+### Preview the production build
 
 ```powershell
 npm run preview
 ```
 
-## Vite Proxy Configuration
+## Frontend Environment Variables
 
-The local dev server proxies frontend chat requests to FastAPI.
+The current code supports these optional Vite variables:
 
-Current behavior:
+```env
+VITE_API_BASE_URL=
+VITE_CHAT_ENDPOINT=/api/chat
+VITE_DEFAULT_THREAD_ID=
+```
 
-- frontend request: `/api/chat`
-- proxied backend request: `http://127.0.0.1:8000/chat`
+Notes:
 
-This avoids common browser CORS issues during development.
-
-## UI Behavior
-
-### Chat layout
-
-- message list is scrollable
-- input composer stays fixed at the bottom of the chat panel
-- chat panel uses the full width of the page
-- messages auto-scroll to the newest response
-
-### Message rendering
-
-- user and assistant messages are visually separated
-- assistant markdown tables are styled for readability
-- timestamps are shown under each bubble
-- loading state shows an animated typing indicator
-- errors are displayed in the chat area
+- `VITE_API_BASE_URL` defaults to an empty string
+- `VITE_CHAT_ENDPOINT` defaults to `/api/chat`
+- `VITE_DEFAULT_THREAD_ID` is optional and can seed a fixed thread when needed
+- there is currently no `.env.example` file in this folder
 
 ## Important Files
 
 - `src/api/chatApi.js`
-  Handles API requests, thread id creation, and `localStorage` persistence.
-
+  Handles API requests, thread-id creation, and `localStorage` persistence.
 - `src/features/chat/chatSlice.js`
-  Handles Redux state, async send flow, response normalization, and message merging.
-
+  Handles Redux state, async send flow, and backend message normalization.
+- `src/components/ChatMessages.jsx`
+  Renders messages, typing state, errors, and auto-scroll behavior.
 - `src/components/MessageBubble.jsx`
-  Renders user messages and markdown-formatted assistant messages.
-
+  Renders assistant Markdown and formatted timestamps.
 - `src/styles.css`
-  Contains layout styling, fixed input behavior, scroll behavior, and markdown table styles.
-
+  Defines the layout, responsive behavior, and markdown table styling.
 - `vite.config.js`
-  Contains the Vite dev server and FastAPI proxy configuration.
+  Configures the dev server and backend proxy.
 
-## Customization Notes
+## Current Limitations
 
-You may want to customize these areas depending on the backend and product experience:
-
-- change backend base URL or route
-- adjust how history messages are mapped
-- render structured product cards instead of plain markdown
-- add filters, sorting, or pagination for catalog responses
-- add authentication if the backend becomes protected
-- persist full conversation history in a database or user session system
+- The UI depends on the backend returning a LangGraph-style `history.messages` array
+- `ProductTips.jsx` exists but is not currently rendered by `App.jsx`
+- There is no conversation reset UI yet
+- There is no streaming response support yet
+- There are no frontend tests yet
 
 ## Troubleshooting
 
-### Clicking Send does not hit the backend
+### Clicking Send does not reach the backend
 
 Check that:
 
 - FastAPI is running on `http://127.0.0.1:8000`
-- the frontend is calling `/api/chat`
-- Vite is running and proxying requests correctly
-- browser devtools Network tab shows the outgoing request
+- Vite is running locally
+- the frontend is posting to `/api/chat`
+- the Vite proxy is active
 
-### Multiple bubbles appear for one response
+### Multiple assistant chunks appear oddly
 
-The frontend already filters non-chat messages and merges sequential assistant chunks. If the backend returns a different history shape, update `src/features/chat/chatSlice.js`.
+The frontend already merges back-to-back assistant messages. If the backend response shape changes, update `src/features/chat/chatSlice.js`.
 
-### Markdown looks broken
+### Timestamps look wrong
 
-Make sure the backend is returning valid markdown text. Assistant markdown rendering is handled in `src/components/MessageBubble.jsx`.
-
-### npm is not recognized in PowerShell
-
-Run:
-
-```powershell
-$env:Path = 'C:\Program Files\nodejs;' + $env:Path
-```
-
-Then run:
-
-```powershell
-npm run dev
-```
-
-## Future Improvements
-
-Possible next steps for this frontend:
-
-- render product cards with image, price, and CTA button
-- support structured JSON product results alongside markdown summaries
-- add filters and quick actions in the chat UI
-- support streaming responses
-- add conversation reset button
-- support multiple chat sessions
-- add dark mode or theme customization
-
-## License
-
-Add your preferred project license here if needed.
+The UI prefers `response_metadata.created_at` from backend messages. If that field is missing, it falls back to local values.
